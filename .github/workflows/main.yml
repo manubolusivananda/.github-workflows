@@ -1,0 +1,77 @@
+name: Build and Deploy to EC2
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+env:
+  IMAGE_NAME: myapp
+  IMAGE_TAG: latest
+  CONTAINER_NAME: myapp
+  HOST_PORT: 3000
+  CONTAINER_PORT: 3000
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: ✅ Checkout repository
+        uses: actions/checkout@v3
+
+      - name: 🚀 Transfer repository to EC2
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ec2-user
+          key: ${{ secrets.EC2_SSH_KEY }}
+          port: 22
+          source: "./"                    # copy entire repo
+          target: "/home/ec2-user/myapp" # destination folder on EC2
+
+      - name: 🖥 Build and run container on EC2
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ec2-user
+          key: ${{ secrets.EC2_SSH_KEY }}
+          port: 22
+          script: |
+            set -e
+            APP_DIR="/home/ec2-user/myapp"
+            CONTAINER="${{ env.CONTAINER_NAME }}"
+            IMAGE="${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}"
+            HOST_PORT=${{ env.HOST_PORT }}
+            CONTAINER_PORT=${{ env.CONTAINER_PORT }}
+
+            echo "📂 Navigating to app directory..."
+            cd $APP_DIR
+
+            echo "📦 Building Docker image..."
+            sudo docker build -t $IMAGE .
+
+            echo "🛑 Stopping old container if exists..."
+            sudo docker stop $CONTAINER || true
+            sudo docker rm $CONTAINER || true
+
+            echo "▶️ Running new container..."
+            sudo docker run -d --restart always \
+              --name $CONTAINER \
+              -p $HOST_PORT:$CONTAINER_PORT \
+              $IMAGE
+
+            echo "✅ Deployment complete!"
+
+      - name: ✅ Verify container is running
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ec2-user
+          key: ${{ secrets.EC2_SSH_KEY }}
+          port: 22
+          script: |
+            echo "🔍 Checking running containers..."
+            sudo docker ps --filter "name=${{ env.CONTAINER_NAME }}" \
+              --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
